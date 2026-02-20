@@ -2,6 +2,9 @@ import * as websocket from "ws";
 import { Server } from 'http';
 import * as handler from "./class/websockethandler";
 
+// ★ 追加：接続中のクライアントを管理するリスト
+let clients: any[] = [];
+
 export default class WSSignaling {
   server: Server;
   wss: websocket.Server;
@@ -13,9 +16,36 @@ export default class WSSignaling {
 
     this.wss.on('connection', (ws: WebSocket) => {
 
+      // ==========================================
+      // ★ ここから追加：Host/Guestの交通整理
+      // ==========================================
+      if (clients.length >= 2) {
+        ws.send(JSON.stringify({ type: 'full', message: '部屋がいっぱいです' }));
+        ws.close();
+        return;
+      }
+
+      clients.push(ws);
+      console.log(`Current clients connected: ${clients.length}`);
+
+      if (clients.length === 1) {
+        // 1人目：ホスト（Offerを出す係）
+        ws.send(JSON.stringify({ type: 'role', role: 'host' }));
+      } else if (clients.length === 2) {
+        // 2人目：ゲスト（待つ係）
+        ws.send(JSON.stringify({ type: 'role', role: 'guest' }));
+        // 1人目に「相手が来たからOffer出して！」と合図を送る
+        clients[0].send(JSON.stringify({ type: 'ready' }));
+      }
+      // ==========================================
+
       handler.add(ws);
 
       ws.onclose = (): void => {
+        // ★ 追加：切断されたらリストから消し、残った相手に伝える
+        clients = clients.filter(client => client !== ws);
+        clients.forEach(c => c.send(JSON.stringify({ type: 'disconnected' })));
+        
         handler.remove(ws);
       };
 
